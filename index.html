@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>周嘉纯 · 作品集</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:#eceef1; }
+  header {
+    position:sticky; top:0; z-index:20; height:52px; background:#fff;
+    display:flex; align-items:center; gap:12px; padding:0 16px;
+    box-shadow:0 1px 4px rgba(0,0,0,.12);
+  }
+  header .title { font-size:15px; font-weight:600; color:#222; white-space:nowrap; }
+  header .spacer { flex:1; }
+  .ctrl { display:flex; align-items:center; gap:6px; }
+  button {
+    border:1px solid #d9dce1; background:#fff; border-radius:6px; height:32px;
+    min-width:32px; cursor:pointer; font-size:14px; color:#333; padding:0 8px;
+  }
+  button:hover { background:#f2f4f7; }
+  button:disabled { opacity:.4; cursor:default; }
+  .pageinfo { font-size:13px; color:#555; min-width:64px; text-align:center; }
+  a.dl {
+    height:32px; line-height:32px; padding:0 12px; border-radius:6px; background:#2f6fed;
+    color:#fff; text-decoration:none; font-size:13px; white-space:nowrap;
+  }
+  #viewer { padding:18px 0 40px; display:flex; flex-direction:column; align-items:center; gap:18px; }
+  .page-wrap { position:relative; background:#fff; box-shadow:0 2px 12px rgba(0,0,0,.18); }
+  canvas { display:block; }
+  .link-layer { position:absolute; inset:0; }
+  .link-layer a { position:absolute; display:block; background:rgba(47,111,237,.08); }
+  .link-layer a:hover { background:rgba(47,111,237,.18); }
+  #loading { text-align:center; color:#666; padding:60px 0; font-size:14px; }
+  #err { display:none; text-align:center; color:#c0392b; padding:40px 20px; font-size:14px; line-height:1.7; }
+</style>
+</head>
+<body>
+<header>
+  <span class="title">周嘉纯 · 作品集</span>
+  <div class="spacer"></div>
+  <div class="ctrl">
+    <button id="prev" title="上一页">‹</button>
+    <span class="pageinfo"><span id="cur">–</span> / <span id="total">–</span></span>
+    <button id="next" title="下一页">›</button>
+    <button id="zoomOut" title="缩小">－</button>
+    <button id="zoomIn" title="放大">＋</button>
+  </div>
+  <a class="dl" id="dl" target="_blank" rel="noopener">下载 PDF</a>
+</header>
+<div id="loading">正在加载作品集…</div>
+<div id="err"></div>
+<div id="viewer"></div>
+
+<script>
+const PDF_URL = "portfolio.pdf";
+// 托管域 CSP 禁止 worker，强制走主线程（fake worker），避免 blob worker 被拦截
+pdfjsLib.GlobalWorkerOptions.workerSrc = "";
+
+const viewer = document.getElementById('viewer');
+const loading = document.getElementById('loading');
+const errBox = document.getElementById('err');
+let pdfDoc = null, scale = 1.1, rendered = [];
+const $ = id => document.getElementById(id);
+
+async function renderPage(num) {
+  const page = await pdfDoc.getPage(num);
+  const viewport = page.getViewport({ scale });
+  const wrap = document.createElement('div');
+  wrap.className = 'page-wrap';
+  wrap.style.width = viewport.width + 'px';
+  wrap.style.height = viewport.height + 'px';
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = viewport.width * dpr;
+  canvas.height = viewport.height * dpr;
+  canvas.style.width = viewport.width + 'px';
+  canvas.style.height = viewport.height + 'px';
+  wrap.appendChild(canvas);
+
+  await page.render({ canvasContext: ctx, viewport, transform: dpr !== 1 ? [dpr,0,0,dpr,0,0] : null }).promise;
+
+  // 链接注释层
+  const annots = await page.getAnnotations();
+  const layer = document.createElement('div');
+  layer.className = 'link-layer';
+  annots.forEach(a => {
+    if (a.subtype !== 'Link' || !a.url) return;
+    const r = a.rect;
+    const tl = viewport.convertToViewportPoint(r[0], r[3]);
+    const br = viewport.convertToViewportPoint(r[2], r[1]);
+    const el = document.createElement('a');
+    el.href = a.url; el.target = '_blank'; el.rel = 'noopener';
+    el.style.left = tl.x + 'px';
+    el.style.top = tl.y + 'px';
+    el.style.width = Math.max(0, br.x - tl.x) + 'px';
+    el.style.height = Math.max(0, br.y - tl.y) + 'px';
+    layer.appendChild(el);
+  });
+  wrap.appendChild(layer);
+  viewer.appendChild(wrap);
+  rendered[num] = wrap;
+}
+
+async function init() {
+  try {
+    const task = pdfjsLib.getDocument({
+      url: PDF_URL,
+      cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
+      cMapPacked: true
+    });
+    pdfDoc = await task.promise;
+    $('total').textContent = pdfDoc.numPages;
+    $('dl').href = PDF_URL;
+    loading.style.display = 'none';
+    for (let i = 1; i <= pdfDoc.numPages; i++) await renderPage(i);
+    $('cur').textContent = 1;
+    bindNav();
+  } catch (e) {
+    loading.style.display = 'none';
+    errBox.style.display = 'block';
+    errBox.textContent = '预览加载失败：' + (e && e.message ? e.message : e) + '。你可以点击右上角「下载 PDF」后本地打开。';
+  }
+}
+
+function bindNav() {
+  $('prev').onclick = () => scrollToPage(Math.max(1, +$('cur').textContent - 1));
+  $('next').onclick = () => scrollToPage(Math.min(pdfDoc.numPages, +$('cur').textContent + 1));
+  $('zoomIn').onclick = () => { scale = Math.min(2.5, +(scale + 0.2).toFixed(1)); reload(); };
+  $('zoomOut').onclick = () => { scale = Math.max(0.6, +(scale - 0.2).toFixed(1)); reload(); };
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(en => {
+      if (en.isIntersecting) {
+        const n = +en.target.dataset.num;
+        $('cur').textContent = n;
+      }
+    });
+  }, { rootMargin: '-40% 0px -40% 0px' });
+  rendered.forEach((w, i) => { if (w) { w.dataset.num = i; obs.observe(w); } });
+}
+
+function scrollToPage(n) {
+  const w = rendered[n];
+  if (w) w.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function reload() {
+  viewer.innerHTML = ''; rendered = [];
+  for (let i = 1; i <= pdfDoc.numPages; i++) renderPage(i).then(() => bindNav());
+}
+
+init();
+</script>
+</body>
+</html>
